@@ -259,7 +259,7 @@ class EtcService(Service):
         ],
         'ttys': [
             {'type': 'mako', 'path': 'ttys', 'platform': 'FreeBSD'},
-            {'type': 'py', 'path': 'ttys_config'}
+            {'type': 'py', 'path': 'ttys_config', 'checkpoint_linux': None}
         ],
         'openvpn_server': [
             {'type': 'mako', 'path': 'local/openvpn/server/openvpn_server.conf'}
@@ -303,7 +303,12 @@ class EtcService(Service):
             if renderer is None:
                 raise ValueError(f'Unknown type: {entry["type"]}')
 
-            if entry.get('checkpoint', 'default') != checkpoint:
+            checkpoint_system = f'checkpoint_{osc.SYSTEM.lower()}'
+            if checkpoint_system in entry:
+                entry_checkpoint = entry[checkpoint_system]
+            else:
+                entry_checkpoint = entry.get('checkpoint', 'default')
+            if entry_checkpoint != checkpoint:
                 continue
 
             if 'platform' in entry and entry['platform'].upper() != osc.SYSTEM:
