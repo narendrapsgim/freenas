@@ -292,7 +292,7 @@ class EtcService(Service):
             'py': PyRenderer(self),
         }
 
-    async def generate(self, name, checkpoint='default'):
+    async def generate(self, name, checkpoint=None):
         group = self.GROUPS.get(name)
         if group is None:
             raise ValueError('{0} group not found'.format(name))
@@ -303,13 +303,14 @@ class EtcService(Service):
             if renderer is None:
                 raise ValueError(f'Unknown type: {entry["type"]}')
 
-            checkpoint_system = f'checkpoint_{osc.SYSTEM.lower()}'
-            if checkpoint_system in entry:
-                entry_checkpoint = entry[checkpoint_system]
-            else:
-                entry_checkpoint = entry.get('checkpoint', 'default')
-            if entry_checkpoint != checkpoint:
-                continue
+            if checkpoint:
+                checkpoint_system = f'checkpoint_{osc.SYSTEM.lower()}'
+                if checkpoint_system in entry:
+                    entry_checkpoint = entry[checkpoint_system]
+                else:
+                    entry_checkpoint = entry.get('checkpoint', 'default')
+                if entry_checkpoint != checkpoint:
+                    continue
 
             if 'platform' in entry and entry['platform'].upper() != osc.SYSTEM:
                 continue
