@@ -2366,7 +2366,7 @@ class VMFSAttachmentDelegate(FSAttachmentDelegate):
     name = 'vm'
     title = 'VM'
 
-    async def query(self, path, enabled):
+    async def query(self, path, enabled, options=None):
         vms_attached = []
         ignored_vms = {
             vm['id']: vm for vm in await self.middleware.call(
