@@ -34,8 +34,8 @@ class ISCSIExtentLockedAlertClass(AlertClass, OneShotAlertClass):
 
     category = AlertCategory.SHARING
     level = AlertLevel.WARNING
-    title = 'ISCSI Extent Locked'
-    text = 'ISCSI "%(name)s" extent is using a locked resource. Please disable the extent.'
+    title = 'iSCSI Extent Locked'
+    text = 'iSCSI "%(name)s" extent is using a locked resource. Please disable the extent.'
 
     async def create(self, args):
         return Alert(ISCSIExtentLockedAlertClass, args, key=args['id'])
