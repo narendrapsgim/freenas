@@ -100,7 +100,7 @@ class RsyncModModel(sa.Model):
 
 class RsyncModService(SharingService):
 
-    service_type = 'Rsync module'
+    share_task_type = 'Rsync Module'
 
     class Config:
         datastore = 'services.rsyncmod'
@@ -250,6 +250,8 @@ class RsyncTaskModel(sa.Model):
 
 
 class RsyncTaskService(TaskPathService):
+
+    share_task_type = 'Rsync'
 
     class Config:
         datastore = 'tasks.rsync'
