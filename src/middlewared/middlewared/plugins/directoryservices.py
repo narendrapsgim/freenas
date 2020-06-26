@@ -1,6 +1,7 @@
 import enum
 import json
 import os
+import struct
 import tdb
 
 from base64 import b64encode, b64decode
@@ -67,6 +68,17 @@ class DirectorySecrets(object):
 
     def has_domain(self, domain):
         return True if self.tdb.get(f"SECRETS/MACHINE_PASSWORD/{domain.upper()}".encode()) else False
+
+    def last_password_change(self, domain):
+        bytes_passwd_chng = self.tdb.get(f"SECRETS/MACHINE_LAST_CHANGE_TIME/{domain.upper()}".encode())
+        if not bytes_passwd_chng:
+            self.logger.warning("Failed to retrieve last password change time for domain "
+                                "[%s] from domain secrets. Directory service functionality "
+                                "may be impacted.")
+            return None
+
+        passwd_chg_ts = struct.unpack("<L", bytes_passwd_chng)[0]
+        return passwd_chg_ts
 
     def dump(self):
         ret = {}
@@ -177,17 +189,21 @@ class DirectoryServices(Service):
         return ret
 
     @private
-    def backup_secrets(self):
-        ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
-        netbios_name = self.middleware.call_sync('smb.config')['netbiosname_local']
+    def get_db_secrets(self):
         db = self.middleware.call_sync('datastore.query',
                                        'services.cifs', [],
                                        {'prefix': 'cifs_srv_', 'get': True})
 
         if db['secrets'] is None:
-            db_secrets = {}
-        else:
-            db_secrets = json.loads(db['secrets'])
+            return {}
+
+        return json.loads(db['secrets'])
+
+    @private
+    def backup_secrets(self):
+        ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
+        netbios_name = self.middleware.call_sync('smb.config')['netbiosname_local']
+        db_secrets = self.get_db_secrets()
 
         with DirectorySecrets(logger=self.logger, ha_mode=ha_mode) as s:
             secrets = s.dump()
@@ -209,11 +225,8 @@ class DirectoryServices(Service):
         if netbios_name is None:
             netbios_name = self.middleware.call_sync('smb.config')['netbiosname_local']
 
-        db = self.middleware.call_sync('datastore.query',
-                                       'services.cifs', [],
-                                       {'prefix': 'cifs_srv_', 'get': True})
+        db_secrets = self.get_db_secrets()
 
-        db_secrets = json.loads(db['secrets'])
         server_secrets = db_secrets.get(netbios_name)
         if server_secrets is None:
             self.logger.warning("Unable to find stored secrets for [%]. "
@@ -241,12 +254,26 @@ class DirectoryServices(Service):
         return rv
 
     @private
-    def available_secrets(self):
-        db = self.middleware.call_sync('datastore.query',
-                                       'services.cifs', [],
-                                       {'prefix': 'cifs_srv_', 'get': True})
+    def get_last_password_change(self, domain=None):
+        ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
+        smb_config = self.middleware.call_sync('smb.config')
+        if domain is None:
+            domain = smb_config['workgroup']
 
-        db_secrets = json.loads(db['secrets'])
+        with DirectorySecrets(logger=self.logger, ha_mode=ha_mode) as s:
+            passwd_ts = s.last_password_change(domain)
+
+        db_secrets = self.get_db_secrets()
+        server_secrets = db_secrets.get(smb_config['netbiosname_local'])
+        stored_ts_bytes = server_secrets[f'SECRETS/MACHINE_LAST_CHANGE_TIME/{domain.upper()}']
+        stored_ts = struct.unpack("<L", b64decode(stored_ts_bytes))[0]
+
+        return {"dbconfig": stored_ts, "secrets": passwd_ts}
+
+
+    @private
+    def available_secrets(self):
+        db_secrets = self.get_db_secrets()
         return list(db_secrets.keys())
 
     @private
