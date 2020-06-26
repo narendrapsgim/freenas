@@ -47,7 +47,6 @@ class NSS_Info(enum.Enum):
 
 class DirectorySecrets(object):
     def __init__(self, **kwargs):
-        super(DirectorySecrets, self).__init__()
         self.flags = kwargs.get('flags', 0)
         self.logger = kwargs.get('logger')
         self.ha_mode = kwargs.get('ha_mode')
@@ -190,20 +189,31 @@ class DirectoryServices(Service):
 
     @private
     def get_db_secrets(self):
+        rv = {}
         db = self.middleware.call_sync('datastore.query',
                                        'services.cifs', [],
                                        {'prefix': 'cifs_srv_', 'get': True})
 
+        rv.update({"id": db['id']})
         if db['secrets'] is None:
-            return {}
+            return rv
 
-        return json.loads(db['secrets'])
+        try:
+            rv.update(json.loads(db['secrets']))
+        except json.decoder.JSONDecodeError:
+            self.logger.warning("Stored secrets are not valid JSON "
+                                "a new backup of secrets should be generated.")
+        return rv
 
     @private
     def backup_secrets(self):
+        """
+        Writes the current secrets database to the freenas config file.
+        """
         ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
         netbios_name = self.middleware.call_sync('smb.config')['netbiosname_local']
         db_secrets = self.get_db_secrets()
+        id = db_secrets.pop('id')
 
         with DirectorySecrets(logger=self.logger, ha_mode=ha_mode) as s:
             secrets = s.dump()
@@ -212,14 +222,20 @@ class DirectoryServices(Service):
             self.logger.warning("Unable to parse secrets")
             return
 
-        db_secrets.update({netbios_name: secrets})
+        db_secrets.update({f"{netbios_name.upper()}$": secrets})
         self.middleware.call_sync('datastore.update',
-                                  'services.cifs', 1,
-                                  {'secrets': str(json.dumps(db_secrets))},
+                                  'services.cifs', id,
+                                  {'secrets': json.dumps(db_secrets)},
                                   {'prefix': 'cifs_srv_'})
 
     @private
     def restore_secrets(self, netbios_name=None):
+        """
+        Restores secrets from a backup copy in the TrueNAS config file. This should
+        be used with caution because winbindd will automatically update machine account
+        passwords at configurable intervals. There is a periodic TrueNAS check that
+        automates this backup, but care should be taken before manually invoking restores.
+        """
         ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
 
         if netbios_name is None:
@@ -227,7 +243,7 @@ class DirectoryServices(Service):
 
         db_secrets = self.get_db_secrets()
 
-        server_secrets = db_secrets.get(netbios_name)
+        server_secrets = db_secrets.get(f"{netbios_name.upper()}$")
         if server_secrets is None:
             self.logger.warning("Unable to find stored secrets for [%]. "
                                 "Directory service functionality may be impacted.",
@@ -247,6 +263,12 @@ class DirectoryServices(Service):
 
     @private
     def secrets_has_domain(self, domain):
+        """
+        Simple check to see whether a particular domain is in the
+        secrets file. Traversing a tdb file can set a tdb chainlock
+        on it. It's better to just do a quick lookup of the
+        single value.
+        """
         ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
         with DirectorySecrets(logger=self.logger, ha_mode=ha_mode) as s:
             rv = s.has_domain(domain)
@@ -255,6 +277,11 @@ class DirectoryServices(Service):
 
     @private
     def get_last_password_change(self, domain=None):
+        """
+        Returns unix timestamp of last password change according to
+        the secrets.tdb (our current running configuration), and what
+        we have in our database.
+        """
         ha_mode = self.middleware.call_sync('smb.get_smb_ha_mode')
         smb_config = self.middleware.call_sync('smb.config')
         if domain is None:
@@ -264,16 +291,28 @@ class DirectoryServices(Service):
             passwd_ts = s.last_password_change(domain)
 
         db_secrets = self.get_db_secrets()
-        server_secrets = db_secrets.get(smb_config['netbiosname_local'])
+        server_secrets = db_secrets.get(f"{smb_config['netbiosname_local']}$")
+        if server_secrets is None:
+            return {"dbconfig": None, "secrets": passwd_ts}
+
         stored_ts_bytes = server_secrets[f'SECRETS/MACHINE_LAST_CHANGE_TIME/{domain.upper()}']
         stored_ts = struct.unpack("<L", b64decode(stored_ts_bytes))[0]
 
         return {"dbconfig": stored_ts, "secrets": passwd_ts}
 
-
     @private
     def available_secrets(self):
+        """
+        Entries in the secrets backup are keyed according to machine account name,
+        which in this case is the netbios name of server followed by a dollar sign ($).
+        These are possible values to add as an argument to 'restore_secrets' so that
+        the secrets.tdb can be restored to what it was prior to a netbios name change.
+        This functionality is intended more as a support tool than for general-purpose
+        use in case user has become somewhat inventive with troubleshooting steps
+        and changing server names.
+        """
         db_secrets = self.get_db_secrets()
+        db_secrets.pop('id')
         return list(db_secrets.keys())
 
     @private
