@@ -84,9 +84,11 @@ class UsageService(Service):
             for task in self.middleware.call_sync(
                 f'{namespace}.query', [['enabled', '=', True], ['direction', '=', 'PUSH'], ['locked', '=', False]]
             ):
-                task_ds = self.middleware.call_sync('zfs.dataset.get_dataset_by_path', task['path'], task_datasets)
+                task_ds = self.middleware.call_sync('zfs.dataset.path_to_dataset', task['path'])
                 if task_ds:
-                    backed[namespace] += task_datasets.pop(task_ds)['properties']['used']['parsed']
+                    task_ds_data = task_datasets.pop(task_ds, None)
+                    if task_ds_data:
+                        backed[namespace] += task_ds_data['properties']['used']['parsed']
                     ds = datasets.pop(task_ds, None)
                     if ds:
                         backed['total_size'] += ds['properties']['used']['parsed']
